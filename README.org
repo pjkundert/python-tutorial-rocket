@@ -1,0 +1,4 @@
+* Python Tutorial -- Rocket
+
+  A simple step-by-step build-up of a rocket simulator, using Curses and a PID loop.
+

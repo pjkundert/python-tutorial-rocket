@@ -46,7 +46,7 @@ class sprite( object ):
         """Clip system coordinates, transform to screen coordinates and clip."""
         rows,cols		= win.getmaxyx()
         x,y			= pos
-        if ( int( y ) < 0 or int( y ) >= rows or int( x ) >= cols ):
+        if ( int( y ) < 0 or int( y ) >= rows or int( x ) < 0 or int( x ) >= cols ):
             if throwing:
                 raise Clipped( "%r beyond range %r" % ( pos, (cols,rows) ))
             return None
@@ -167,7 +167,7 @@ class body( object ):
         self.position		= position
         self.velocity		= velocity
         self.acceleration	= acceleration
-        super( body, self ).__init__( thing )
+        super( body, self ).__init__( thing=thing )
 
     @property
     def done( self ):
@@ -200,10 +200,11 @@ class body( object ):
 
 class fragment( body, sprites ):
     """A body/sprite that draw a rotating fragment that modulates over time, 'til done (at which time it
-    displays its native thing)."""
+    displays its native thing).  Disappears after some seconds."""
     def __init__( self, *args, **kwds ):
         self.speed		= random.randint( 1, 10 )
         self.offset		= random.randint( 0, 3 )
+        self.timeout		= kwds.pop( 'timeout', None )
         super( fragment, self ).__init__( *args, **kwds )
 
     @sprites.thing.getter
@@ -212,19 +213,42 @@ class fragment( body, sprites ):
             return "|/-\\"[ int( self.offset + timer() * 13 / self.speed ) % 4 ]
         return super( fragment, self ).thing
 
+    def advance( self, dt ):
+        if self.done:
+            if self.timeout is not None:
+                self.timeout	-= dt
+        return super( fragment, self ).advance( dt )
+
+    def constrain( self ):
+        if self.timeout is not None and self.timeout <= 0:
+            return []
+        return super( fragment, self ).constrain()
+
 
 class rocket( body, sprites ):
     """A body/sprites (eg. which draws a rocket w/ modulating flame), that converts itself into chunks
     of fragments on impact.
 
     """
+    def __init__( self, *args, **kwds ):
+        if not args and 'thing' not in kwds:
+            kwds['thing']	= [ ((0,1),'^'), ((0,0),'|'), ([0,-1],exhaust( ";'`^!.," )) ]
+            super( rocket, self ).__init__( *args, **kwds )
+
     def constrain( self ):
         if self.position[Y] <= 0 and self.velocity[Y] < -1:
-            # Crash (> -1m/s velocity at touchdown).  Replace rocket w/ its chunks...
+            # Crash (> -1m/s velocity at touchdown).  Replace rocket w/ its chunks, roughly
+            # splitting up its momentum...
             chunks		= []
-            for chunk in range( 10 ):
-                chunks.append( fragment(
-                    'x', position=[self.position[X],0], acceleration=[0,G], velocity=[chunk-5, 20] ))
+            count		= random.randint( 2, 10 )
+            momentum		= sum( v**2 for v in self.velocity ) ** .5 # magnitude of vector
+            for chunk in range( count ):
+                velocity	= [
+                    random.uniform( -momentum/count*2, momentum/count*2 ),
+                    random.uniform( -momentum/count*2, momentum/count*2 )
+                ]	
+                chunks.append( fragment( random.choice( 'xX!@#%^' ), timeout=5,
+                    position=[self.position[X],0], acceleration=[0,G], velocity=velocity ))
             return chunks
         return super( rocket, self ).constrain()
 
@@ -252,7 +276,6 @@ def animation( win, title='Rocket', timewarp=1.0 ):
         # Restart
         if 0 <= input <= 255 and chr( input ) in (' ',):
             bodies.append( rocket(
-                [ ((0,1),'^'), ((0,0),'|'), ([0,-1],exhaust( ";'`^!.," )) ],
                 position=[50, 0], velocity=[0,30], acceleration=[0,G] ))
 
         # Next frame of animation
@@ -269,8 +292,6 @@ def animation( win, title='Rocket', timewarp=1.0 ):
         for b in bodies:
             b.update( win )
 
-        if bodies:
-            message( win, "%7.3fms^2" % bodies[-1].velocity[Y], row=1, cleartoeol=False )
 
 
 def step( bodies, dt ):

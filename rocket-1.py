@@ -21,7 +21,19 @@ class sprite( object ):
     """
     def __init__( self, thing ):
         """Remember thing to draw.  This base class only supports a str"""
+        self._thing		= None
         self.thing		= thing
+
+    @property
+    def thing( self ):
+        return self._thing
+    @thing.setter
+    def thing( self, value ):
+        self._thing = value
+
+    @property
+    def done( self ):
+        return False
 
     def transform( self, win, pos=None, off=None ):
         x,y			= pos or (0,0)
@@ -54,22 +66,11 @@ class sprite( object ):
 
 class exhaust( sprite ):
     """A sprite that draw a flame-like symbol that modulates over time."""
-    @property
+    @sprite.thing.getter
     def thing( self ):
-        return ";'`^!.,"[ int( timer() * 97 ) % 7 ]
-    @thing.setter
-    def thing( self, value ):
-        pass
+        thing			= super( exhaust, self ).thing
+        return thing[ int( timer() * 97 ) % len( thing ) ] # eg. ";'`^!.,"
 
-
-class fragment( sprite ):
-    """A sprite that draw a rotating fragment that modulates over time."""
-    @property
-    def thing( self ):
-        return "|/-\\"[ int( self.offset + timer() * 97 ) % 4 ]
-    @thing.setter
-    def thing( self, value ):
-        self.offset		= random.randint( 0, 3 )
 
 
 class sprites( sprite ):
@@ -154,13 +155,24 @@ def homemade( p, v, dt, a ):
 X				= 0
 Y				= 1
 
-class body( sprites ):
-    """A physical body, w/ initial position/velocity/acceleration in N dimensions."""
+class body( object ):
+    """A physical body, w/ initial position/velocity/acceleration in N dimensions.  Combine with a
+    sprite object, to give it physical position, velocity and acceleration capabilities:
+
+    class something( body, sprites ):
+        pass
+
+    """
     def __init__( self, thing, position, velocity, acceleration ):
         self.position		= position
         self.velocity		= velocity
         self.acceleration	= acceleration
         super( body, self ).__init__( thing )
+
+    @property
+    def done( self ):
+        """If we're at/below ground level, we'll say we're done..."""
+        return self.position[Y] <= 0
 
     def advance( self, dt ):
         """Compute new position, velocity"""
@@ -183,18 +195,36 @@ class body( sprites ):
         return None
 
     def update( self, win ):
-        """Apply position constraints, and draw.  By default, we just crash and stick."""
         self.draw( win, self.position, cleartoeol=False )
 
 
-class rocket( body ):
+class fragment( body, sprites ):
+    """A body/sprite that draw a rotating fragment that modulates over time, 'til done (at which time it
+    displays its native thing)."""
+    def __init__( self, *args, **kwds ):
+        self.speed		= random.randint( 1, 10 )
+        self.offset		= random.randint( 0, 3 )
+        super( fragment, self ).__init__( *args, **kwds )
+
+    @sprites.thing.getter
+    def thing( self ):
+        if not self.done:
+            return "|/-\\"[ int( self.offset + timer() * 13 / self.speed ) % 4 ]
+        return super( fragment, self ).thing
+
+
+class rocket( body, sprites ):
+    """A body/sprites (eg. which draws a rocket w/ modulating flame), that converts itself into chunks
+    of fragments on impact.
+
+    """
     def constrain( self ):
         if self.position[Y] <= 0 and self.velocity[Y] < -1:
             # Crash (> -1m/s velocity at touchdown).  Replace rocket w/ its chunks...
             chunks		= []
             for chunk in range( 10 ):
-                chunks.append( body( [((0,0),fragment(''))],
-                                     position=[self.position[X],0], acceleration=[0,G], velocity=[chunk-5, 20] ))
+                chunks.append( fragment(
+                    'x', position=[self.position[X],0], acceleration=[0,G], velocity=[chunk-5, 20] ))
             return chunks
         return super( rocket, self ).constrain()
 
@@ -221,8 +251,9 @@ def animation( win, title='Rocket', timewarp=1.0 ):
 
         # Restart
         if 0 <= input <= 255 and chr( input ) in (' ',):
-            bodies.append( rocket( [ ((0,1),'^'), ((0,0),'|'), ([0,-1],exhaust('')) ],
-                                 position=[50, 0], velocity=[0,30], acceleration=[0,G] ))
+            bodies.append( rocket(
+                [ ((0,1),'^'), ((0,0),'|'), ([0,-1],exhaust( ";'`^!.," )) ],
+                position=[50, 0], velocity=[0,30], acceleration=[0,G] ))
 
         # Next frame of animation
         win.erase()

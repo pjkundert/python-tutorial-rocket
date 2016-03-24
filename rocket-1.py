@@ -36,6 +36,7 @@ class sprite( object ):
         return False
 
     def transform( self, win, pos=None, off=None ):
+        """Transform from system to display coordinates."""
         x,y			= pos or (0,0)
         if off:
             dx,dy		= off
@@ -68,9 +69,7 @@ class exhaust( sprite ):
     """A sprite that draw a flame-like symbol that modulates over time."""
     @sprite.thing.getter
     def thing( self ):
-        thing			= super( exhaust, self ).thing
-        return thing[ int( timer() * 97 ) % len( thing ) ] # eg. ";'`^!.,"
-
+        return random.choice( super( exhaust, self ).thing )
 
 
 class sprites( sprite ):
@@ -175,7 +174,7 @@ class body( object ):
         return self.position[Y] <= 0
 
     def advance( self, dt ):
-        """Compute new position, velocity"""
+        """Compute new position, velocity from current acceleration."""
         pos,vel			= [],[]
         for p,v,a in zip( self.position, self.velocity, self.acceleration ):
             p_new,v_new		= verlet( p, v, dt, lambda r: a)
@@ -187,8 +186,8 @@ class body( object ):
     def constrain( self ):
         """Constrain an object, if necessary.  By default, just crash and stop.  Returns a list of body
         instances to replace itself, if necessary, or None if no replacment"""
-        if self.position[Y] <= 0 and self.acceleration[Y] < 0:
-            # We're at/below ground, and have -'ve vertical acceleration.  Stop at current X.
+        if self.position[Y] <= 0 and self.velocity[Y] < 0:
+            # We're at/below ground, and have -'ve vertical velocity.  Stop at current X.
             self.position[Y]	= 0
             self.velocity	= [0,0]
             self.acceleration	= [0,0]
@@ -196,6 +195,23 @@ class body( object ):
 
     def update( self, win ):
         self.draw( win, self.position, cleartoeol=False )
+
+
+class active( body ):
+    """A body w/ mass, reactive to forces acting upon it.  Defaults to acceleration G in the Y axis."""
+    def __init__( self, *args, **kwds ):
+        """Capture any starting mass and thrust (default to 0 for each acceleration axis, if None)."""
+        self.mass		= kwds.pop( 'mass' )		# required mass
+        self.thrust		= kwds.pop( 'thrust', None )	# optional thrust
+        super( active, self ).__init__( *args, **kwds )
+        if self.thrust is None:
+            self.thrust		= [0 for _ in self.acceleration]
+
+    def advance( self, dt ):
+        """Thrust in kg.m/s^2 over mass in kg yields acceleration in m/s^2"""
+        self.acceleration	= [ t/self.mass for t in self.thrust ]
+        self.acceleration[Y]   += G
+        super( active, self ).advance( dt )
 
 
 class fragment( body, sprites ):
@@ -225,15 +241,65 @@ class fragment( body, sprites ):
         return super( fragment, self ).constrain()
 
 
-class rocket( body, sprites ):
-    """A body/sprites (eg. which draws a rocket w/ modulating flame), that converts itself into chunks
-    of fragments on impact.
+class rocket( active, sprites ):
+    """An active/sprites (eg. which draws a rocket w/ modulating flame), that converts itself into
+    chunks of fragments on impact, and has thrust.
 
     """
     def __init__( self, *args, **kwds ):
         if not args and 'thing' not in kwds:
-            kwds['thing']	= [ ((0,1),'^'), ((0,0),'|'), ([0,-1],exhaust( ";'`^!.," )) ]
+            kwds['thing']	= [
+                (( 0, 1),'^'), 
+                (( 0, 0), exhaust( "|!" )),
+                (( 0,-1), sprites([
+                    (( 0, 0), exhaust( "'`" )),
+                ])),
+                (( 0,-1), sprites([
+                    (( 0, 0), exhaust( ";'`^!.," )),
+                ])),
+                (( 0,-1), sprites([
+                    (( 0, 0), exhaust( "xo" )),
+                    (( 0,-1), exhaust( ";'`^!.," )),
+                ])),
+                (( 0,-1), sprites([
+                    (( 0, 0), exhaust( "XxOo" )),
+                    (( 0,-1), exhaust( "xo" )),
+                    (( 0,-2), exhaust( ";'`^!.," )),
+                ])),
+                (( 0,-1), sprites([
+                    ((-1, 0), exhaust( "( " )),
+                    (( 0, 0), exhaust( "XO" )),
+                    (( 1, 0), exhaust( " )" )),
+                    (( 0,-1), exhaust( "xo" )),
+                    (( 0,-2), exhaust( ";'`^!.," )),
+                ])),
+                (( 0,-1), sprites([
+                    ((-1, 0), exhaust( "(" )),
+                    (( 0, 0), exhaust( "XO" )),
+                    (( 1, 0), exhaust( ")" )),
+                    (( 0,-1), exhaust( "xo" )),
+                    (( 0,-2), exhaust( "xo" )),
+                    (( 0,-3), exhaust( ";'`^!.," )),
+                ])),
+                (( 0,-1), sprites([
+                    ((-1, 0), exhaust( "(" )),
+                    (( 0, 0), exhaust( "XO" )),
+                    (( 1, 0), exhaust( ")" )),
+                    (( 0,-1), exhaust( "xo" )),
+                    (( 0,-2), exhaust( "xo" )),
+                    (( 0,-3), exhaust( "xo" )),
+                    (( 0,-4), exhaust( ";'`^!.," )),
+                ])),
+            ]
             super( rocket, self ).__init__( *args, **kwds )
+        # eg. 2 * 10m/s^2 * 1000kg == 20,000kg.m/s^2 max thrust
+        self.limit		= 2 * -G * self.mass
+
+    @sprites.thing.getter
+    def thing( self ):
+        thing			= super( rocket, self ).thing
+        scale			= self.thrust[Y] / self.limit # range: [0.0,1.0]
+        return thing[0:2+int( round(( len( thing ) - 2 ) * scale ))]
 
     def constrain( self ):
         if self.position[Y] <= 0 and self.velocity[Y] < -1:
@@ -273,9 +339,16 @@ def animation( win, title='Rocket', timewarp=1.0 ):
         if 0 <= input <= 255 and chr( input ) == 'w':
             timewarp           *= .95
 
+        if 0 <= input <= 255 and chr( input ) in "0123456789":
+            for b in bodies[::-1]:
+                if hasattr( b, 'limit' ):
+                    # has thrust limit; select 0-90% of limit thrust
+                    b.thrust[Y]	= int( chr( input )) * b.limit / 10
+
         # Restart
         if 0 <= input <= 255 and chr( input ) in (' ',):
             bodies.append( rocket(
+                mass=1000,
                 position=[50, 0], velocity=[0,30], acceleration=[0,G] ))
 
         # Next frame of animation
@@ -286,20 +359,20 @@ def animation( win, title='Rocket', timewarp=1.0 ):
         dt                      = ( real - last ) * timewarp
         last                    = real
 
-        now                    += dt
+        bodies			= step( bodies, win, dt )
+        for r,b in enumerate( b for b in bodies[::-1] if hasattr( b, 'limit' )):
+            message( win, "%7.3f, %7.3f m/s" % ( b.velocity[X], b.velocity[Y] ), row=r+1, cleartoeol=False )
+            
+            
 
-        bodies			= step( bodies, dt )
-        for b in bodies:
-            b.update( win )
-
-
-
-def step( bodies, dt ):
+def step( bodies, win, dt ):
         bodies_new		= []
         for b in bodies:
             b.advance( dt )
             replacement		= b.constrain()
             bodies_new	       += [b] if replacement is None else replacement
+        for b in bodies_new:
+            b.update( win )
         return bodies_new
 
 

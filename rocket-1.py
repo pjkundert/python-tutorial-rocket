@@ -247,8 +247,9 @@ class autopilot( object ):
 
     def advance( self, dt, now=None ):
         """Adjust thrust for the time period, based on position relative to target."""
-        self.thrust[Y]	= self.limit * self.controller.loop(
-            setpoint=0., process=self.difference(), now=now ) / 100
+        if self.auto:
+            self.thrust[Y] = self.limit * self.controller.loop(
+                setpoint=0., process=self.difference(), now=now ) / 100
         return super( autopilot, self ).advance( dt, now=now )
 
     def update( self, win ):
@@ -410,6 +411,12 @@ def animation( win, title='Rocket', timewarp=1.0 ):
                     # has thrust limit; select 0-90% of limit thrust
                     b.thrust[Y]	= int( chr( input )) * b.limit / 10
 
+        # Enable/disable autopilot
+        if 0 <= input <= 255 and chr( input ) in "aA":
+            for b in bodies:
+                if hasattr( b, 'auto' ):
+                    b.auto	= not( b.auto )
+
         # Restart
         if 0 <= input <= 255 and chr( input ) in (' ',):
             bodies.append( rocket(
@@ -428,8 +435,9 @@ def animation( win, title='Rocket', timewarp=1.0 ):
 
         bodies			= step( bodies, win, dt, now )
         for r,b in enumerate( b for b in bodies[::-1] if hasattr( b, 'limit' )):
-            message( win, "%7.3f, %7.3f m/s: %7.3f kg.m/s^2" % (
-                b.velocity[X], b.velocity[Y], b.thrust[Y] ), row=r+1, cleartoeol=False )
+            message( win, "%7.3f, %7.3f m/s: %7.3f kg.m/s^2 %s" % (
+                b.velocity[X], b.velocity[Y], b.thrust[Y], "auto" if hasattr( b, 'auto' ) and b.auto else "    " ),
+                     row=r+1, cleartoeol=False )
             
 
 def step( bodies, win, dt, now ):
